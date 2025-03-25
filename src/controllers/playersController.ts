@@ -21,7 +21,9 @@ export class PlayersController {
                     cm.match_title,
                     cm.game_name,
                     p1.nickname AS player1_name,
+                    p1.team AS player1_team,
                     p2.nickname AS player2_name,
+                    p2.team AS player2_team,
                     c1.flag_url AS player1_flag,
                     c2.flag_url AS player2_flag
                 FROM
@@ -39,8 +41,42 @@ export class PlayersController {
                 LIMIT 1
             `);
 
-            const players = result.rows[0];
-            res.status(200).json(players);
+            if (result.rows.length === 0) {
+                res.status(404).json({
+                    message: 'No hay matches activos'
+                });
+            }
+
+            const match = result.rows[0];
+
+            const formattedResponse = {
+                matches: [
+                    {
+                        match_id: match.match_id,
+                        player1: {
+                            name: match.player1_name,
+                            score: match.player1_score,
+                            flag: match.player1_flag,
+                            team: match.player1_team
+                        },
+                        player2: {
+                            name: match.player2_name,
+                            score: match.player2_score,
+                            flag: match.player2_flag,
+                            team: match.player2_team
+                        },
+                        match_details: {
+                            title: match.match_title,
+                            game: match.game_name,
+                            best_of: 5,
+                            current_map: "Summoner's Rift",
+                            status: "En progreso",
+                        }
+                    }
+                ]
+            };
+
+            res.status(200).json(formattedResponse);
         } catch (error) {
             console.error('Error fetching current match:', error);
             res.status(500).json({ message: 'Error obteniendo información del match' });
