@@ -12,6 +12,18 @@ export class PlayersController {
     }
 
     public getPlayers = async (req: Request, res: Response) => {
-        res.status(200).json({ msg: 'Test' })
+        try {
+            const result = await this.pool.query('SELECT * FROM player');
+            res.status(200).json({
+                ok: true,
+                players: result.rows
+            });
+        } catch (error) {
+            console.error('Error fetching players:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error interno del servidor'
+            });
+        }
     }
 }

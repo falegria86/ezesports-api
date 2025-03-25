@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --watch src/app.ts",
     "build": "rimraf ./dist && tsc",
-    "start": "bun run build && bun dist/app.js"
+    "start": "bun dist/app.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
