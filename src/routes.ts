@@ -9,6 +9,7 @@ export class AppRoutes {
 
         router.get('/api/current_match', playersController.getCurrentMatch);
         router.get('/api', playersController.getCurrentMatch);
+        router.get('/api/players', playersController.getAllPlayers);
         return router;
     }
 }
