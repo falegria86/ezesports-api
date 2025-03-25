@@ -39,7 +39,7 @@ export class PlayersController {
                 LIMIT 1
             `);
 
-            const players = result.rows;
+            const players = result.rows[0];
             res.status(200).json(players);
         } catch (error) {
             console.error('Error fetching current match:', error);
