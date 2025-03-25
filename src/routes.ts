@@ -6,7 +6,9 @@ export class AppRoutes {
         const router = Router();
         const playersController = new PlayersController();
 
-        router.get('/api', playersController.getPlayers);
+
+        router.get('/api/current_match', playersController.getCurrentMatch);
+        router.get('/api', playersController.getCurrentMatch);
         return router;
     }
 }
