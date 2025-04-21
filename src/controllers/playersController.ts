@@ -21,7 +21,7 @@ export class PlayersController {
                     cm.player1_score,
                     cm.player2_score,
                     cm.match_title,
-                    cm.game_name,
+                    cm.game_id,
                     p1.nickname AS player1_name,
                     p2.nickname AS player2_name,
                     c1.flag_url AS player1_flag,
@@ -130,7 +130,7 @@ export class PlayersController {
                     });
 
                     if (!vMixUpdateResponse.ok) {
-                        console.warn('No se pudo actualizar vMix, pero los datos se guardaron en la base de datos');
+                        console.log('No se pudo actualizar vMix, pero los datos se guardaron en la base de datos');
                     }
                 }
             } catch (vMixError) {
@@ -189,7 +189,6 @@ export class PlayersController {
                     cm.player1_score,
                     cm.player2_score,
                     cm.match_title,
-                    cm.game_name,
                     p1.nickname AS player1_name,
                     p2.nickname AS player2_name,
                     c1.flag_url AS player1_flag,
