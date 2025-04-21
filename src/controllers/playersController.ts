@@ -84,7 +84,7 @@ export class PlayersController {
             const { player1_score, player2_score } = req.body;
 
             if (player1_score === undefined && player2_score === undefined) {
-                return res.status(400).json({ message: 'Se requiere al menos un score para actualizar' });
+                res.status(400).json({ message: 'Se requiere al menos un score para actualizar' });
             }
 
             let updateQuery = 'UPDATE current_match SET ';
@@ -110,7 +110,7 @@ export class PlayersController {
             const result = await this.pool.query(updateQuery, queryParams);
 
             if (result.rows.length === 0) {
-                return res.status(404).json({ message: 'No se encontró un partido actual' });
+                res.status(404).json({ message: 'No se encontró un partido actual' });
             }
 
             const updatedMatch = result.rows[0];
@@ -161,7 +161,7 @@ export class PlayersController {
             } = req.body;
 
             if (!player1_id || !player2_id) {
-                return res.status(400).json({ message: 'Se requiere ID de ambos jugadores' });
+                res.status(400).json({ message: 'Se requiere ID de ambos jugadores' });
             }
 
             const result = await this.pool.query(`

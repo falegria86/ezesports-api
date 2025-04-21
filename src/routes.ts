@@ -10,8 +10,8 @@ export class AppRoutes {
         router.get('/api', playersController.getCurrentMatch);
         router.get('/api/players', playersController.getAllPlayers);
 
-        router.put('/api/current_match/scores', playersController.updateCurrentMatchScores as any);
-        router.post('/api/current_match', playersController.createCurrentMatch as any);
+        router.put('/api/current_match/scores', playersController.updateCurrentMatchScores);
+        router.post('/api/current_match', playersController.createCurrentMatch);
 
         return router;
     }
