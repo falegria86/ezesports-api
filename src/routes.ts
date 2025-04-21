@@ -11,7 +11,7 @@ export class AppRoutes {
         router.get('/api/players', playersController.getAllPlayers);
 
         router.put('/api/current_match/scores', playersController.updateCurrentMatchScores as any);
-        router.put('/api/current_match', playersController.createCurrentMatch as any);
+        router.post('/api/current_match', playersController.createCurrentMatch as any);
 
         return router;
     }
