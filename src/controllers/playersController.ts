@@ -1,18 +1,16 @@
 import { Pool } from "pg";
 import { envs } from "../config/envs";
-import  { type Request, type Response } from "express";
+import { type Request, type Response } from "express";
 
 export class PlayersController {
     private pool: Pool;
     private localApiUrl: string;
-    private apiKey: string;
 
     constructor() {
         this.pool = new Pool({
             connectionString: envs.HOST
         });
-        this.localApiUrl = envs.LOCAL_API_URL;
-        this.apiKey = envs.API_KEY;
+        this.localApiUrl = "http://localhost:3001";
     }
 
     getCurrentMatch = async (req: Request, res: Response) => {
@@ -123,7 +121,6 @@ export class PlayersController {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'x-api-key': this.apiKey
                         },
                         body: JSON.stringify({
                             player1_score: player1_score,
@@ -218,7 +215,6 @@ export class PlayersController {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': this.apiKey
                     },
                     body: JSON.stringify({
                         match_title: fullMatch.match_title,
@@ -232,7 +228,6 @@ export class PlayersController {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': this.apiKey
                     },
                     body: JSON.stringify({
                         player1_score: fullMatch.player1_score,
