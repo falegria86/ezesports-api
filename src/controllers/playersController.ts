@@ -4,51 +4,16 @@ import { type Request, type Response } from "express";
 
 export class PlayersController {
     private pool: Pool;
-    private localApiUrl: string;
 
     constructor() {
         this.pool = new Pool({
             connectionString: envs.HOST
         });
-        this.localApiUrl = "http://localhost:3001";
     }
 
-    getCurrentMatch = async (req: Request, res: Response) => {
-        try {
-            const result = await this.pool.query(`
-                SELECT
-                    cm.match_id,
-                    cm.player1_score,
-                    cm.player2_score,
-                    cm.match_title,
-                    cm.game_id,
-                    p1.nickname AS player1_name,
-                    p2.nickname AS player2_name,
-                    c1.flag_url AS player1_flag,
-                    c2.flag_url AS player2_flag
-                FROM
-                    current_match cm
-                JOIN
-                    players p1 ON cm.player1_id = p1.player_id
-                JOIN
-                    players p2 ON cm.player2_id = p2.player_id
-                JOIN
-                    countries c1 ON p1.country_id = c1.country_id
-                JOIN
-                    countries c2 ON p2.country_id = c2.country_id
-                ORDER BY
-                    cm.match_id DESC
-                LIMIT 1
-            `);
-
-            const match = result.rows[0];
-            res.status(200).json(match);
-        } catch (error) {
-            console.error('Error fetching current match:', error);
-            res.status(500).json({ message: 'Error obteniendo información del match' });
-        }
-    }
-
+    /**
+     * Obtiene todos los jugadores
+     */
     getAllPlayers = async (req: Request, res: Response) => {
         try {
             const result = await this.pool.query(`
@@ -58,18 +23,20 @@ export class PlayersController {
                     p.full_name,
                     p.team,
                     p.avatar_url,
+                    p.position,
+                    p.last_result,
                     c.name AS country_name,
-                    c.code AS country_code
+                    c.code AS country_code,
+                    c.country_id
                 FROM
                     players p
-                JOIN
+                LEFT JOIN
                     countries c ON p.country_id = c.country_id
                 ORDER BY
-                    p.full_name
+                    p.nickname
             `);
-            const players = result.rows;
 
-            res.status(200).json(players);
+            res.status(200).json(result.rows);
         } catch (error) {
             console.error('Error fetching players:', error);
             res.status(500).json({
@@ -77,174 +44,599 @@ export class PlayersController {
                 msg: 'Error interno del servidor'
             });
         }
-    }
+    };
 
-    updateCurrentMatchScores = async (req: Request, res: Response) => {
+    /**
+     * Obtiene un jugador por su ID
+     */
+    getPlayerById = async (req: Request, res: Response) => {
+        const { id } = req.params;
+
         try {
-            const { player1_score, player2_score } = req.body;
+            // Obtener información del jugador
+            const playerResult = await this.pool.query(`
+                SELECT
+                    p.player_id,
+                    p.nickname,
+                    p.full_name,
+                    p.team,
+                    p.avatar_url,
+                    p.position,
+                    p.last_result,
+                    p.tournament1,
+                    p.tournament2,
+                    p.tournament3,
+                    c.country_id,
+                    c.name AS country_name,
+                    c.code AS country_code
+                FROM
+                    players p
+                LEFT JOIN
+                    countries c ON p.country_id = c.country_id
+                WHERE
+                    p.player_id = $1
+            `, [id]);
 
-            if (player1_score === undefined && player2_score === undefined) {
-                res.status(400).json({ message: 'Se requiere al menos un score para actualizar' });
+            if (playerResult.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'Jugador no encontrado'
+                });
+                return;
             }
 
-            let updateQuery = 'UPDATE current_match SET ';
-            const updateValues = [];
-            const queryParams = [];
+            const player = playerResult.rows[0];
 
-            if (player1_score !== undefined) {
-                updateValues.push(`player1_score = $${updateValues.length + 1}`);
-                queryParams.push(player1_score);
-            }
+            // Obtener juegos y personajes del jugador
+            const playerGamesResult = await this.pool.query(`
+                SELECT
+                    pg.player_game_id,
+                    g.game_id,
+                    g.name AS game_name,
+                    g.logo_url AS game_logo,
+                    pg.rank,
+                    pg.skill_rating,
+                    c1.character_id AS main_character_id,
+                    c1.name AS main_character_name,
+                    c1.image_url AS main_character_image,
+                    c2.character_id AS secondary_character_id,
+                    c2.name AS secondary_character_name,
+                    c2.image_url AS secondary_character_image
+                FROM
+                    player_games pg
+                JOIN
+                    games g ON pg.game_id = g.game_id
+                LEFT JOIN
+                    characters c1 ON pg.main_character_id = c1.character_id
+                LEFT JOIN
+                    characters c2 ON pg.secondary_character_id = c2.character_id
+                WHERE
+                    pg.player_id = $1
+            `, [id]);
 
-            if (player2_score !== undefined) {
-                updateValues.push(`player2_score = $${updateValues.length + 1}`);
-                queryParams.push(player2_score);
-            }
+            player.games = playerGamesResult.rows;
 
-            updateValues.push(`updated_at = $${updateValues.length + 1}`);
-            queryParams.push(new Date());
+            // Obtener resultados recientes del jugador
+            const recentMatchesResult = await this.pool.query(`
+                SELECT
+                    mh.match_id,
+                    mh.match_date,
+                    g.name AS game_name,
+                    t.name AS tournament_name,
+                    CASE
+                        WHEN mh.player1_id = $1 THEN p2.nickname
+                        ELSE p1.nickname
+                    END AS opponent_nickname,
+                    CASE
+                        WHEN mh.player1_id = $1 THEN mh.player1_score
+                        ELSE mh.player2_score
+                    END AS player_score,
+                    CASE
+                        WHEN mh.player1_id = $1 THEN mh.player2_score
+                        ELSE mh.player1_score
+                    END AS opponent_score,
+                    CASE
+                        WHEN mh.winner_id = $1 THEN true
+                        ELSE false
+                    END AS is_winner
+                FROM
+                    match_history mh
+                JOIN
+                    games g ON mh.game_id = g.game_id
+                LEFT JOIN
+                    tournaments t ON mh.tournament_id = t.tournament_id
+                JOIN
+                    players p1 ON mh.player1_id = p1.player_id
+                JOIN
+                    players p2 ON mh.player2_id = p2.player_id
+                WHERE
+                    mh.player1_id = $1 OR mh.player2_id = $1
+                ORDER BY
+                    mh.match_date DESC
+                LIMIT 5
+            `, [id]);
 
-            updateQuery += updateValues.join(', ');
-            updateQuery += ' WHERE match_id = (SELECT match_id FROM current_match ORDER BY match_id DESC LIMIT 1) RETURNING *';
+            player.recent_matches = recentMatchesResult.rows;
 
-            const result = await this.pool.query(updateQuery, queryParams);
-
-            if (result.rows.length === 0) {
-                res.status(404).json({ message: 'No se encontró un partido actual' });
-            }
-
-            const updatedMatch = result.rows[0];
-
-            try {
-                if (player1_score !== undefined || player2_score !== undefined) {
-                    const vMixUpdateResponse = await fetch(`${this.localApiUrl}/player-scores`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            player1_score: player1_score,
-                            player2_score: player2_score,
-                            match_id: updatedMatch.match_id
-                        })
-                    });
-
-                    if (!vMixUpdateResponse.ok) {
-                        console.log('No se pudo actualizar vMix, pero los datos se guardaron en la base de datos');
-                    }
-                }
-            } catch (vMixError) {
-                console.error('Error al comunicarse con vMix:', vMixError);
-            }
-
-            res.status(200).json({
-                message: 'Scores actualizados correctamente',
-                match: updatedMatch
-            });
+            res.status(200).json(player);
         } catch (error) {
-            console.error('Error updating match scores:', error);
-            res.status(500).json({ message: 'Error actualizando los scores del partido' });
+            console.error('Error fetching player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error interno del servidor'
+            });
         }
-    }
+    };
 
-    createCurrentMatch = async (req: Request, res: Response) => {
+    /**
+     * Crea un nuevo jugador
+     */
+    createPlayer = async (req: Request, res: Response) => {
+        const {
+            nickname,
+            full_name,
+            country_id,
+            team,
+            avatar_url,
+            position,
+            last_result,
+            tournament1,
+            tournament2,
+            tournament3
+        } = req.body;
+
+        // Validación básica
+        if (!nickname) {
+            res.status(400).json({
+                ok: false,
+                msg: 'El nickname del jugador es obligatorio'
+            });
+            return;
+        }
+
+        const client = await this.pool.connect();
+
         try {
-            const {
-                player1_id,
-                player2_id,
-                player1_score,
-                player2_score,
-                game_id,
-                tournament_id,
-                match_title,
-                round
-            } = req.body;
+            await client.query('BEGIN');
 
-            if (!player1_id || !player2_id) {
-                res.status(400).json({ message: 'Se requiere ID de ambos jugadores' });
+            // Verificar si ya existe un jugador con ese nickname
+            const existingPlayer = await client.query('SELECT 1 FROM players WHERE nickname = $1', [nickname]);
+
+            if (existingPlayer.rows.length > 0) {
+                res.status(400).json({
+                    ok: false,
+                    msg: 'Ya existe un jugador con ese nickname'
+                });
+                await client.query('ROLLBACK');
+                return;
             }
 
-            const result = await this.pool.query(`
-                INSERT INTO current_match
-                (player1_id, player2_id, player1_score, player2_score, game_id, tournament_id, match_title, round, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            // Verificar si el país existe (si se proporciona)
+            if (country_id) {
+                const countryExists = await client.query('SELECT 1 FROM countries WHERE country_id = $1', [country_id]);
+
+                if (countryExists.rows.length === 0) {
+                    res.status(400).json({
+                        ok: false,
+                        msg: 'El país especificado no existe'
+                    });
+                    await client.query('ROLLBACK');
+                    return;
+                }
+            }
+
+            const result = await client.query(`
+                INSERT INTO players (
+                    nickname,
+                    full_name,
+                    country_id,
+                    team,
+                    avatar_url,
+                    position,
+                    last_result,
+                    tournament1,
+                    tournament2,
+                    tournament3
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING *
             `, [
-                player1_id,
-                player2_id,
-                player1_score || 0,
-                player2_score || 0,
-                game_id,
-                tournament_id,
-                match_title,
-                round,
-                new Date()
+                nickname,
+                full_name,
+                country_id,
+                team,
+                avatar_url,
+                position,
+                last_result,
+                tournament1,
+                tournament2,
+                tournament3
             ]);
 
-            const newMatch = result.rows[0];
-
-            const fullMatchResult = await this.pool.query(`
-                SELECT
-                    cm.match_id,
-                    cm.player1_score,
-                    cm.player2_score,
-                    cm.match_title,
-                    p1.nickname AS player1_name,
-                    p2.nickname AS player2_name,
-                    c1.flag_url AS player1_flag,
-                    c2.flag_url AS player2_flag
-                FROM
-                    current_match cm
-                JOIN
-                    players p1 ON cm.player1_id = p1.player_id
-                JOIN
-                    players p2 ON cm.player2_id = p2.player_id
-                JOIN
-                    countries c1 ON p1.country_id = c1.country_id
-                JOIN
-                    countries c2 ON p2.country_id = c2.country_id
-                WHERE
-                    cm.match_id = $1
-            `, [newMatch.match_id]);
-
-            const fullMatch = fullMatchResult.rows[0];
-
-            try {
-                await fetch(`${this.localApiUrl}/match-title`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        match_title: fullMatch.match_title,
-                        game_name: fullMatch.game_name,
-                        player1_name: fullMatch.player1_name,
-                        player2_name: fullMatch.player2_name
-                    })
-                });
-
-                await fetch(`${this.localApiUrl}/player-scores`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        player1_score: fullMatch.player1_score,
-                        player2_score: fullMatch.player2_score,
-                        match_id: fullMatch.match_id
-                    })
-                });
-            } catch (vMixError) {
-                console.error('Error al comunicarse con vMix:', vMixError);
-            }
+            await client.query('COMMIT');
 
             res.status(201).json({
-                message: 'Partido creado correctamente',
-                match: fullMatch
+                ok: true,
+                player: result.rows[0]
             });
         } catch (error) {
-            console.error('Error creating match:', error);
-            res.status(500).json({ message: 'Error creando el partido' });
+            await client.query('ROLLBACK');
+            console.error('Error creating player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error al crear el jugador'
+            });
+        } finally {
+            client.release();
         }
-    }
+    };
+
+    /**
+     * Actualiza un jugador existente
+     */
+    updatePlayer = async (req: Request, res: Response) => {
+        const { id } = req.params;
+        const {
+            nickname,
+            full_name,
+            country_id,
+            team,
+            avatar_url,
+            position,
+            last_result,
+            tournament1,
+            tournament2,
+            tournament3
+        } = req.body;
+
+        // Validación básica
+        if (!nickname) {
+            res.status(400).json({
+                ok: false,
+                msg: 'El nickname del jugador es obligatorio'
+            });
+            return;
+        }
+
+        const client = await this.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Verificar si el jugador existe
+            const checkResult = await client.query('SELECT 1 FROM players WHERE player_id = $1', [id]);
+
+            if (checkResult.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'Jugador no encontrado'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Verificar si ya existe otro jugador con ese nickname
+            const existingPlayer = await client.query(
+                'SELECT 1 FROM players WHERE nickname = $1 AND player_id != $2',
+                [nickname, id]
+            );
+
+            if (existingPlayer.rows.length > 0) {
+                res.status(400).json({
+                    ok: false,
+                    msg: 'Ya existe otro jugador con ese nickname'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Verificar si el país existe (si se proporciona)
+            if (country_id) {
+                const countryExists = await client.query('SELECT 1 FROM countries WHERE country_id = $1', [country_id]);
+
+                if (countryExists.rows.length === 0) {
+                    res.status(400).json({
+                        ok: false,
+                        msg: 'El país especificado no existe'
+                    });
+                    await client.query('ROLLBACK');
+                    return;
+                }
+            }
+
+            const result = await client.query(`
+                UPDATE players
+                SET
+                    nickname = $1,
+                    full_name = $2,
+                    country_id = $3,
+                    team = $4,
+                    avatar_url = $5,
+                    position = $6,
+                    last_result = $7,
+                    tournament1 = $8,
+                    tournament2 = $9,
+                    tournament3 = $10
+                WHERE
+                    player_id = $11
+                RETURNING *
+            `, [
+                nickname,
+                full_name,
+                country_id,
+                team,
+                avatar_url,
+                position,
+                last_result,
+                tournament1,
+                tournament2,
+                tournament3,
+                id
+            ]);
+
+            await client.query('COMMIT');
+
+            res.status(200).json({
+                ok: true,
+                player: result.rows[0]
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error updating player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error al actualizar el jugador'
+            });
+        } finally {
+            client.release();
+        }
+    };
+
+    /**
+     * Elimina un jugador
+     */
+    deletePlayer = async (req: Request, res: Response) => {
+        const { id } = req.params;
+        const client = await this.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Verificar si el jugador existe
+            const checkResult = await client.query('SELECT 1 FROM players WHERE player_id = $1', [id]);
+
+            if (checkResult.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'Jugador no encontrado'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Eliminar registros relacionados en player_games
+            await client.query('DELETE FROM player_games WHERE player_id = $1', [id]);
+
+            // Verificar si el jugador está en algún partido actual
+            const currentMatchCheck = await client.query(
+                'SELECT 1 FROM current_match WHERE player1_id = $1 OR player2_id = $1',
+                [id]
+            );
+
+            if (currentMatchCheck.rows.length > 0) {
+                res.status(400).json({
+                    ok: false,
+                    msg: 'No se puede eliminar el jugador porque está en un partido actual'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Eliminar al jugador
+            await client.query('DELETE FROM players WHERE player_id = $1', [id]);
+
+            await client.query('COMMIT');
+
+            res.status(200).json({
+                ok: true,
+                msg: 'Jugador eliminado correctamente'
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error deleting player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error al eliminar el jugador'
+            });
+        } finally {
+            client.release();
+        }
+    };
+
+    /**
+     * Asigna un juego y personajes a un jugador
+     */
+    assignGameToPlayer = async (req: Request, res: Response) => {
+        const { playerId } = req.params;
+        const {
+            game_id,
+            main_character_id,
+            secondary_character_id,
+            rank,
+            skill_rating
+        } = req.body;
+
+        // Validación básica
+        if (!game_id) {
+            res.status(400).json({
+                ok: false,
+                msg: 'El ID del juego es obligatorio'
+            });
+            return;
+        }
+
+        const client = await this.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Verificar si el jugador existe
+            const playerExists = await client.query('SELECT 1 FROM players WHERE player_id = $1', [playerId]);
+
+            if (playerExists.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'Jugador no encontrado'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Verificar si el juego existe
+            const gameExists = await client.query('SELECT 1 FROM games WHERE game_id = $1', [game_id]);
+
+            if (gameExists.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'Juego no encontrado'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Verificar si el personaje principal existe (si se proporciona)
+            if (main_character_id) {
+                const mainCharacterExists = await client.query(
+                    'SELECT 1 FROM characters WHERE character_id = $1 AND game_id = $2',
+                    [main_character_id, game_id]
+                );
+
+                if (mainCharacterExists.rows.length === 0) {
+                    res.status(400).json({
+                        ok: false,
+                        msg: 'El personaje principal no existe o no pertenece a este juego'
+                    });
+                    await client.query('ROLLBACK');
+                    return;
+                }
+            }
+
+            // Verificar si el personaje secundario existe (si se proporciona)
+            if (secondary_character_id) {
+                const secondaryCharacterExists = await client.query(
+                    'SELECT 1 FROM characters WHERE character_id = $1 AND game_id = $2',
+                    [secondary_character_id, game_id]
+                );
+
+                if (secondaryCharacterExists.rows.length === 0) {
+                    res.status(400).json({
+                        ok: false,
+                        msg: 'El personaje secundario no existe o no pertenece a este juego'
+                    });
+                    await client.query('ROLLBACK');
+                    return;
+                }
+            }
+
+            // Verificar si ya existe esta relación
+            const existingRelation = await client.query(
+                'SELECT player_game_id FROM player_games WHERE player_id = $1 AND game_id = $2',
+                [playerId, game_id]
+            );
+
+            let result;
+
+            if (existingRelation.rows.length > 0) {
+                // Actualizar la relación existente
+                result = await client.query(`
+                    UPDATE player_games
+                    SET
+                        main_character_id = $1,
+                        secondary_character_id = $2,
+                        rank = $3,
+                        skill_rating = $4
+                    WHERE
+                        player_id = $5 AND game_id = $6
+                    RETURNING *
+                `, [main_character_id, secondary_character_id, rank, skill_rating, playerId, game_id]);
+            } else {
+                // Crear nueva relación
+                result = await client.query(`
+                    INSERT INTO player_games (
+                        player_id,
+                        game_id,
+                        main_character_id,
+                        secondary_character_id,
+                        rank,
+                        skill_rating
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING *
+                `, [playerId, game_id, main_character_id, secondary_character_id, rank, skill_rating]);
+            }
+
+            await client.query('COMMIT');
+
+            res.status(201).json({
+                ok: true,
+                player_game: result.rows[0]
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error assigning game to player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error al asignar el juego al jugador'
+            });
+        } finally {
+            client.release();
+        }
+    };
+
+    /**
+     * Elimina un juego asignado a un jugador
+     */
+    removeGameFromPlayer = async (req: Request, res: Response) => {
+        const { playerId, gameId } = req.params;
+        const client = await this.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Verificar si la relación existe
+            const relationExists = await client.query(
+                'SELECT 1 FROM player_games WHERE player_id = $1 AND game_id = $2',
+                [playerId, gameId]
+            );
+
+            if (relationExists.rows.length === 0) {
+                res.status(404).json({
+                    ok: false,
+                    msg: 'El jugador no tiene este juego asignado'
+                });
+                await client.query('ROLLBACK');
+                return;
+            }
+
+            // Eliminar la relación
+            await client.query(
+                'DELETE FROM player_games WHERE player_id = $1 AND game_id = $2',
+                [playerId, gameId]
+            );
+
+            await client.query('COMMIT');
+
+            res.status(200).json({
+                ok: true,
+                msg: 'Juego eliminado del jugador correctamente'
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error removing game from player:', error);
+            res.status(500).json({
+                ok: false,
+                msg: 'Error al eliminar el juego del jugador'
+            });
+        } finally {
+            client.release();
+        }
+    };
 }
